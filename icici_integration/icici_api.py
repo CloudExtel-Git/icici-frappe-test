@@ -374,7 +374,7 @@ def verify_supplier_bank(supplier):
         if bene_name:
             msg += f"<br><b>Beneficiary Name (from bank):</b> {bene_name}"
     else:
-        msg = f"❌ ICICI verification failed (HTTP {http_status}).<br>Check ICICI raw response."
+        msg = f"❌ ICICI verification failed (HTTP {http_status}).<br>Check ICICI raw response {resp_json}."
 
     return {
         "success": ok,
