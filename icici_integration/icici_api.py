@@ -195,6 +195,8 @@ def call_icici_name_inquiry(
         "x-priority": x_priority,
     }
 
+    logger.info("ICICI REQUEST HEADERS - URL: {0}, API Key Present: {1}".format(url, bool(api_key)))
+
     try:
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
     except Exception as e:
