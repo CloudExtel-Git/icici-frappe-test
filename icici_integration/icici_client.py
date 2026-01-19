@@ -34,10 +34,10 @@ def get_icici_config() -> tuple:
     """
     conf = getattr(frappe, "conf", {}) or {}
     
-    url = conf.get("icici_url") or DEFAULT_ICICI_URL
-    api_key = conf.get("icici_api_key") or ""
-    x_priority = conf.get("icici_x_priority") or DEFAULT_X_PRIORITY
-    service = conf.get("icici_service") or DEFAULT_SERVICE
+    url = str(conf.get("icici_url") or DEFAULT_ICICI_URL).strip()
+    api_key = str(conf.get("icici_api_key") or "").strip()
+    x_priority = str(conf.get("icici_x_priority") or DEFAULT_X_PRIORITY).strip()
+    service = str(conf.get("icici_service") or DEFAULT_SERVICE).strip()
     
     if not api_key:
         frappe.throw(
