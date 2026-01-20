@@ -195,7 +195,9 @@ def call_icici_name_inquiry(
         "x-priority": x_priority,
     }
 
-    logger.info("ICICI REQUEST HEADERS - URL: {0}, API Key Present: {1}".format(url, bool(api_key)))
+    logger.info("ICICI REQUEST - URL: {0}".format(url))
+    logger.info("ICICI REQUEST - API Key Present: {0}, Length: {1}".format(bool(api_key), len(api_key) if api_key else 0))
+    logger.info("ICICI REQUEST - Headers: {0}".format({k: v[:10] + "..." if len(str(v)) > 10 else v for k, v in headers.items()}))
 
     try:
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
