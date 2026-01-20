@@ -188,19 +188,12 @@ def call_icici_name_inquiry(
 
     logger.info("ICICI ENVELOPE: {0}".format(envelope))
 
-    headers = {
-        "Content-Type": "application/json",
-        "accept": "application/json",
-        "apikey": api_key,
-        "x-priority": x_priority,
-    }
-
     logger.info("ICICI REQUEST - URL: {0}".format(url))
     logger.info("ICICI REQUEST - API Key Present: {0}, Length: {1}".format(bool(api_key), len(api_key) if api_key else 0))
     logger.info("ICICI REQUEST - Headers: {0}".format({k: v[:10] + "..." if len(str(v)) > 10 else v for k, v in headers.items()}))
 
     try:
-        resp = requests.post(url, json=envelope, headers=headers, timeout=60)
+        resp = requests.post(url, json=envelope, headers=headers, timeout=60, allow_redirects=False, verify=True)
     except Exception as e:
         frappe.throw(
             _("Error calling ICICI API: {0}").format(e),
