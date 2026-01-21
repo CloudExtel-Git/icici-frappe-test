@@ -200,7 +200,7 @@ def call_icici_name_inquiry(
     except Exception as e:
         frappe.log_error(message=headers, title="header")
         frappe.log_error(message=envelope, title="envelope")
-        frappe.log_error(message=resp, title="resp")
+        frappe.log_error(message=e, title="resp")
         frappe.throw(
             _("Error calling ICICI API: {0}").format(e),
             title=_("ICICI Integration Error"),
