@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 # CONFIG HELPERS
 # ---------------------------------------------------------------------------
 
-DEFAULT_ICICI_URL = "https://apibankingonesandbox.icici.bank.in/api/v1/composite-validation"
+DEFAULT_ICICI_URL = "https://apibankingonesandbox.icicibank.in/api/v1/composite-validation"
 DEFAULT_X_PRIORITY = "0010"
 DEFAULT_SERVICE = "IMPS_NAME_INQUIRY"
 
@@ -272,115 +272,216 @@ def icici_name_inquiry(
 # SUPPLIER HELPER – VERIFY BANK FROM SUPPLIER FIELDS
 # ---------------------------------------------------------------------------
 
-
 @frappe.whitelist()
-def verify_supplier_bank(supplier):
+def verify_supplier_bank(supplier: str) -> Dict[str, Any]:
     """
     Verify the bank account of a Supplier using ICICI IMPS Name Inquiry.
 
     Uses Supplier fields:
       - custom_bank_account_number
       - custom_bank_ifsc_code
+      - custom_bank_account_details (optional Link to Bank Account)
 
     Optionally writes back status fields if they exist on Supplier:
-      - custom_bank_verified (Check)
-      - custom_icici_account_name (Data)
+      - custom_icici_status (Data)
       - custom_icici_verified_on (Datetime)
       - custom_icici_raw_response (Long Text)
-      - custom_icici_status (Data)
     """
 
     doc = frappe.get_doc("Supplier", supplier)
 
-    # --------- Read account details from Supplier ----------
+    # ------------ Get account + IFSC from Supplier ------------
     bene_acc = (doc.get("custom_bank_account_number") or "").strip()
     bene_ifsc = (doc.get("custom_bank_ifsc_code") or "").strip()
 
+    # Optional: Bank Account link as backup
+    bank_link = (doc.get("custom_bank_account_details") or "").strip()
+    if bank_link:
+        try:
+            bank_doc = frappe.get_doc("Bank Account", bank_link)
+            if not bene_acc:
+                bene_acc = (bank_doc.get("bank_account_no") or "").strip()
+            if not bene_ifsc:
+                bene_ifsc = (
+                    (bank_doc.get("custom_ifsc") or "").strip()
+                    or (bank_doc.get("ifsc_code") or "").strip()
+                )
+        except Exception:
+            # If Bank Account cannot be loaded, continue with Supplier values
+            pass
+
     if not bene_acc or not bene_ifsc:
         frappe.throw(
-            "Bank Account Number (custom_bank_account_number) and "
-            "IFSC (custom_bank_ifsc_code) are required on Supplier before verification."
+            _(
+                "Bank Account Number or IFSC is missing. "
+                "Please fill <b>Bank Account Number</b> and <b>Bank IFSC Code</b> on Supplier."
+            )
         )
 
-    rem_name = (doc.supplier_name or supplier).strip()
+    rem_name = doc.supplier_name or supplier
     rem_mobile = (
         doc.get("mobile_no")
         or doc.get("phone")
-        or "9999999999"  # fallback
+        or "9999999999"  # last-resort dummy
     )
     rem_mobile = str(rem_mobile).strip()
 
-    tran_ref = frappe.utils.now_datetime().strftime("%Y%m%d%H%M%S")
-
-    # --------- Call the common ICICI helper ----------
     ok, http_status, resp_json = call_icici_name_inquiry(
         bene_acc=bene_acc,
         bene_ifsc=bene_ifsc,
         rem_name=rem_name,
         rem_mobile=rem_mobile,
-        tran_ref=tran_ref,
     )
 
-    # --------- Try to interpret ICICI response (we'll refine once we see real JSON) ----------
+    # --------- Interpret response (adjust once ICICI format is final) ----------
     match_flag = None
-    bene_name = None
-    data_block = None
+    status_text = f"HTTP {http_status}"
 
-    if isinstance(resp_json, dict):
-        # ICICI might wrap data; adjust once you see real structure in custom_icici_raw_response
-        data_block = resp_json.get("data") or resp_json.get("response") or resp_json
-
-        if isinstance(data_block, dict):
-            bene_name = (
-                data_block.get("BeneName")
-                or data_block.get("beneName")
-                or data_block.get("accountName")
-            )
+    try:
+        # You will need to adapt keys based on the final ICICI response format
+        if isinstance(resp_json, dict):
             match_flag = (
-                data_block.get("matchFlag")
-                or data_block.get("status")
+                resp_json.get("beneNameMatch")
+                or resp_json.get("matchFlag")
                 or resp_json.get("status")
             )
+        if match_flag:
+            status_text += f" | Match: {match_flag}"
+    except Exception:
+        pass
 
+    # Optional: write status back to Supplier if fields exist
     meta = doc.meta
 
-    # Save raw ICICI response (for debugging / audit)
+    if meta.has_field("custom_icici_status"):
+        doc.db_set("custom_icici_status", status_text, commit=False)
+
+    if meta.has_field("custom_icici_verified_on"):
+        doc.db_set("custom_icici_verified_on", frappe.utils.now(), commit=False)
+
     if meta.has_field("custom_icici_raw_response"):
         doc.db_set("custom_icici_raw_response", frappe.as_json(resp_json), commit=False)
 
-    # Save verification timestamp
-    if meta.has_field("custom_icici_verified_on"):
-        doc.db_set("custom_icici_verified_on", frappe.utils.now_datetime(), commit=False)
-
-    # Save returned beneficiary name
-    if meta.has_field("custom_icici_account_name"):
-        doc.db_set("custom_icici_account_name", bene_name or "", commit=False)
-
-    # Mark verified flag
-    if meta.has_field("custom_bank_verified"):
-        doc.db_set("custom_bank_verified", 1 if ok else 0, commit=False)
-
-    # Optional status text
-    if meta.has_field("custom_icici_status"):
-        status_text = f"HTTP {http_status}"
-        if match_flag:
-            status_text += f" | Match: {match_flag}"
-        doc.db_set("custom_icici_status", status_text, commit=False)
-
     frappe.db.commit()
-
-    # Message shown to user
-    if ok:
-        msg = f"✅ ICICI verification call succeeded (HTTP {http_status})."
-        if bene_name:
-            msg += f"<br><b>Beneficiary Name (from bank):</b> {bene_name}"
-    else:
-        msg = f"❌ ICICI verification failed (HTTP {http_status}).<br>Check ICICI raw response {resp_json}."
 
     return {
         "success": ok,
-        "http_status": http_status,
-        "message": msg,
+        "http_status": http_status,        "match_flag": match_flag,
+        "status_text": status_text,
         "icici_response": resp_json,
     }
+
+
+
+
+# @frappe.whitelist()
+# def verify_supplier_bank(supplier):
+#     """
+#     Verify the bank account of a Supplier using ICICI IMPS Name Inquiry.
+
+#     Uses Supplier fields:
+#       - custom_bank_account_number
+#       - custom_bank_ifsc_code
+
+#     Optionally writes back status fields if they exist on Supplier:
+#       - custom_bank_verified (Check)
+#       - custom_icici_account_name (Data)
+#       - custom_icici_verified_on (Datetime)
+#       - custom_icici_raw_response (Long Text)
+#       - custom_icici_status (Data)
+#     """
+
+#     doc = frappe.get_doc("Supplier", supplier)
+
+#     # --------- Read account details from Supplier ----------
+#     bene_acc = (doc.get("custom_bank_account_number") or "").strip()
+#     bene_ifsc = (doc.get("custom_bank_ifsc_code") or "").strip()
+
+#     if not bene_acc or not bene_ifsc:
+#         frappe.throw(
+#             "Bank Account Number (custom_bank_account_number) and "
+#             "IFSC (custom_bank_ifsc_code) are required on Supplier before verification."
+#         )
+
+#     rem_name = (doc.supplier_name or supplier).strip()
+#     rem_mobile = (
+#         doc.get("mobile_no")
+#         or doc.get("phone")
+#         or "9999999999"  # fallback
+#     )
+#     rem_mobile = str(rem_mobile).strip()
+
+#     tran_ref = frappe.utils.now_datetime().strftime("%Y%m%d%H%M%S")
+
+#     # --------- Call the common ICICI helper ----------
+#     ok, http_status, resp_json = call_icici_name_inquiry(
+#         bene_acc=bene_acc,
+#         bene_ifsc=bene_ifsc,
+#         rem_name=rem_name,
+#         rem_mobile=rem_mobile,
+#         tran_ref=tran_ref,
+#     )
+
+#     # --------- Try to interpret ICICI response (we'll refine once we see real JSON) ----------
+#     match_flag = None
+#     bene_name = None
+#     data_block = None
+
+#     if isinstance(resp_json, dict):
+#         # ICICI might wrap data; adjust once you see real structure in custom_icici_raw_response
+#         data_block = resp_json.get("data") or resp_json.get("response") or resp_json
+
+#         if isinstance(data_block, dict):
+#             bene_name = (
+#                 data_block.get("BeneName")
+#                 or data_block.get("beneName")
+#                 or data_block.get("accountName")
+#             )
+#             match_flag = (
+#                 data_block.get("matchFlag")
+#                 or data_block.get("status")
+#                 or resp_json.get("status")
+#             )
+
+#     meta = doc.meta
+
+#     # Save raw ICICI response (for debugging / audit)
+#     if meta.has_field("custom_icici_raw_response"):
+#         doc.db_set("custom_icici_raw_response", frappe.as_json(resp_json), commit=False)
+
+#     # Save verification timestamp
+#     if meta.has_field("custom_icici_verified_on"):
+#         doc.db_set("custom_icici_verified_on", frappe.utils.now_datetime(), commit=False)
+
+#     # Save returned beneficiary name
+#     if meta.has_field("custom_icici_account_name"):
+#         doc.db_set("custom_icici_account_name", bene_name or "", commit=False)
+
+#     # Mark verified flag
+#     if meta.has_field("custom_bank_verified"):
+#         doc.db_set("custom_bank_verified", 1 if ok else 0, commit=False)
+
+#     # Optional status text
+#     if meta.has_field("custom_icici_status"):
+#         status_text = f"HTTP {http_status}"
+#         if match_flag:
+#             status_text += f" | Match: {match_flag}"
+#         doc.db_set("custom_icici_status", status_text, commit=False)
+
+#     frappe.db.commit()
+
+#     # Message shown to user
+#     if ok:
+#         msg = f"✅ ICICI verification call succeeded (HTTP {http_status})."
+#         if bene_name:
+#             msg += f"<br><b>Beneficiary Name (from bank):</b> {bene_name}"
+#     else:
+#         msg = f"❌ ICICI verification failed (HTTP {http_status}).<br>Check ICICI raw response."
+
+#     return {
+#         "success": ok,
+#         "http_status": http_status,
+#         "message": msg,
+#         "icici_response": resp_json,
+#     }
 
