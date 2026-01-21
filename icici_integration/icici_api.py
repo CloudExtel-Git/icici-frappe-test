@@ -175,7 +175,8 @@ def call_icici_name_inquiry(
         "BcID": "IBCKer00055",
     }
 
-    logger = frappe.logger("icici_integration")
+    frappe.throw(inner)
+	logger = frappe.logger("icici_integration")
     logger.info("ICICI INNER PAYLOAD: {0}".format(inner))
 
     try:
