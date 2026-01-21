@@ -175,13 +175,15 @@ def call_icici_name_inquiry(
         "BcID": "IBCKer00055",
     }
 
-    frappe.log_error(inner)
 	logger = frappe.logger("icici_integration")
     logger.info("ICICI INNER PAYLOAD: {0}".format(inner))
 
     try:
         envelope = encrypt_inner_payload(inner, tran_ref, service)
+		frappe.log_error(inner)
     except Exception as e:
+		frappe.log_error(inner)
+	
         frappe.throw(
             _("Failed to encrypt payload for ICICI: {0}").format(e),
             title=_("ICICI Integration Error"),
