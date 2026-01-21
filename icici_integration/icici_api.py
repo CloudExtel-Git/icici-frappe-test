@@ -37,29 +37,14 @@ def get_icici_config() -> Tuple[str, str, str, str]:
         "icici_api_key": "xxxxxxxx",
         "icici_x_priority": "0010",
         "icici_service": "IMPS_NAME_INQUIRY"
+
     """
     conf = getattr(frappe, "conf", {}) or {}
 
-    url = str(conf.get("icici_url") or DEFAULT_ICICI_URL).strip()
-
-    raw_api_key = conf.get("icici_api_key") or ""
-    # Guard: some users accidentally put dicts in site_config.json
-    if isinstance(raw_api_key, dict):
-        # Try common patterns; otherwise fail loudly
-        if "token" in raw_api_key and isinstance(raw_api_key.get("token"), (str, bytes)):
-            api_key = str(raw_api_key.get("token")).strip()
-        elif "icici_api_key" in raw_api_key and isinstance(raw_api_key.get("icici_api_key"), (str, bytes)):
-            api_key = str(raw_api_key.get("icici_api_key")).strip()
-        else:
-            frappe.throw(
-                _("icici_api_key must be a string in site_config.json (not an object/dict)."),
-                title=_("ICICI Integration Error"),
-            )
-    else:
-        api_key = str(raw_api_key).strip()
-
-    x_priority = str(conf.get("icici_x_priority") or DEFAULT_X_PRIORITY).strip()
-    service = str(conf.get("icici_service") or DEFAULT_SERVICE).strip()
+    url = conf.get("icici_url") or DEFAULT_ICICI_URL
+    api_key = conf.get("icici_api_key") or ""
+    x_priority = conf.get("icici_x_priority") or DEFAULT_X_PRIORITY
+    service = conf.get("icici_service") or DEFAULT_SERVICE
 
     if not api_key:
         frappe.throw(
@@ -81,6 +66,7 @@ def get_cert_path() -> str:
     """
     app_root = frappe.get_app_path("icici_integration")  # /home/.../apps/icici_integration
     return os.path.join(app_root, "icici_integration", "icici_cert.pem")
+
 
 
 def load_icici_public_key():
@@ -111,6 +97,7 @@ def encrypt_inner_payload(inner_body: Dict[str, Any], request_id: str, service: 
     - AES-256-CBC with PKCS7 padding
     - AES key encrypted using ICICI RSA public key (OAEP SHA-256)
     """
+
     # 1) Convert JSON to compact bytes
     plaintext = json.dumps(inner_body, separators=(",", ":")).encode("utf-8")
 
@@ -144,6 +131,7 @@ def encrypt_inner_payload(inner_body: Dict[str, Any], request_id: str, service: 
         "service": service,
         "encryptedKey": base64.b64encode(encrypted_key).decode("ascii"),
         "encryptedData": base64.b64encode(ciphertext).decode("ascii"),
+        # Docs often show "NONE" here, we keep that unless ICICI tells otherwise
         "oaepHashingAlgorithm": "NONE",
         "iv": base64.b64encode(iv).decode("ascii"),
         "clientInfo": "",
@@ -173,14 +161,6 @@ def call_icici_name_inquiry(
     if not tran_ref:
         tran_ref = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
-    # Define headers (was missing in your pasted code)
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "apikey": api_key,
-        "x-priority": x_priority,
-    }
-
     inner = {
         "BeneAccNo": bene_acc,
         "BeneIFSC": bene_ifsc,
@@ -194,43 +174,29 @@ def call_icici_name_inquiry(
         "Channel": "APICORPBC",
         "BcID": "IBCKer00055",
     }
-	logger = frappe.logger("icici_integration")
+
+    logger = frappe.logger("icici_integration")
     logger.info("ICICI INNER PAYLOAD: {0}".format(inner))
 
     try:
         envelope = encrypt_inner_payload(inner, tran_ref, service)
     except Exception as e:
-        # Helpful trace in Error Log
-        frappe.log_error(title="ICICI Encryption Error", message=frappe.get_traceback())
-        frappe.log_error(title="ICICI Inner Payload", message=frappe.as_json(inner))
-
         frappe.throw(
             _("Failed to encrypt payload for ICICI: {0}").format(e),
             title=_("ICICI Integration Error"),
         )
 
     logger.info("ICICI ENVELOPE: {0}".format(envelope))
-    logger.info("ICICI REQUEST - URL: {0}".format(url))
-    logger.info(
-        "ICICI REQUEST - API Key Present: {0}, Length: {1}".format(
-            bool(api_key), len(api_key) if api_key else 0
-        )
-    )
-    logger.info(
-        "ICICI REQUEST - Headers: {0}".format(
-            {k: (str(v)[:10] + "...") if len(str(v)) > 10 else v for k, v in headers.items()}
-        )
-    )
+
+    headers = {
+        "Content-Type": "application/json",
+        "accept": "application/json",
+        "apikey": api_key,
+        "x-priority": x_priority,
+    }
 
     try:
-        resp = requests.post(
-            url,
-            json=envelope,
-            headers=headers,
-            timeout=60,
-            allow_redirects=False,
-            verify=True,
-        )
+        resp = requests.post(url, json=envelope, headers=headers, timeout=60)
     except Exception as e:
         frappe.throw(
             _("Error calling ICICI API: {0}").format(e),
@@ -275,6 +241,7 @@ def icici_name_inquiry(
       "TranRefNo": "20251205123000"   // optional
     }
     """
+
     bene_acc = (BeneAccNo or "").strip()
     bene_ifsc = (BeneIFSC or "").strip()
     rem_name = (RemName or "").strip()
@@ -305,6 +272,7 @@ def icici_name_inquiry(
 # SUPPLIER HELPER – VERIFY BANK FROM SUPPLIER FIELDS
 # ---------------------------------------------------------------------------
 
+
 @frappe.whitelist()
 def verify_supplier_bank(supplier):
     """
@@ -321,6 +289,7 @@ def verify_supplier_bank(supplier):
       - custom_icici_raw_response (Long Text)
       - custom_icici_status (Data)
     """
+
     doc = frappe.get_doc("Supplier", supplier)
 
     # --------- Read account details from Supplier ----------
@@ -334,7 +303,11 @@ def verify_supplier_bank(supplier):
         )
 
     rem_name = (doc.supplier_name or supplier).strip()
-    rem_mobile = doc.get("mobile_no") or doc.get("phone") or "9999999999"
+    rem_mobile = (
+        doc.get("mobile_no")
+        or doc.get("phone")
+        or "9999999999"  # fallback
+    )
     rem_mobile = str(rem_mobile).strip()
 
     tran_ref = frappe.utils.now_datetime().strftime("%Y%m%d%H%M%S")
@@ -348,12 +321,13 @@ def verify_supplier_bank(supplier):
         tran_ref=tran_ref,
     )
 
-    # --------- Try to interpret ICICI response ----------
+    # --------- Try to interpret ICICI response (we'll refine once we see real JSON) ----------
     match_flag = None
     bene_name = None
     data_block = None
 
     if isinstance(resp_json, dict):
+        # ICICI might wrap data; adjust once you see real structure in custom_icici_raw_response
         data_block = resp_json.get("data") or resp_json.get("response") or resp_json
 
         if isinstance(data_block, dict):
@@ -395,12 +369,13 @@ def verify_supplier_bank(supplier):
 
     frappe.db.commit()
 
+    # Message shown to user
     if ok:
-        msg = f"ICICI verification call succeeded (HTTP {http_status})."
+        msg = f"✅ ICICI verification call succeeded (HTTP {http_status})."
         if bene_name:
             msg += f"<br><b>Beneficiary Name (from bank):</b> {bene_name}"
     else:
-        msg = f"ICICI verification failed (HTTP {http_status}).<br>ICICI response: {resp_json}"
+        msg = f"❌ ICICI verification failed (HTTP {http_status}).<br>Check ICICI raw response {resp_json}."
 
     return {
         "success": ok,
@@ -408,3 +383,4 @@ def verify_supplier_bank(supplier):
         "message": msg,
         "icici_response": resp_json,
     }
+
