@@ -199,7 +199,7 @@ def call_icici_name_inquiry(
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
         frappe.log_error(message=headers, title="header")
         frappe.log_error(message=envelope, title="envelope")
-        frappe.log_error(message=resp, title="resp")
+        frappe.log_error(message=resp.json(), title="resp")
         
     except Exception as e:
         frappe.log_error(message=headers, title="header")
