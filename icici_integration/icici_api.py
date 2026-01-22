@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 # CONFIG HELPERS
 # ---------------------------------------------------------------------------
 
-DEFAULT_ICICI_URL = "https://apibankingonesandbox.icicibank.in/api/v1/composite-validation"
+DEFAULT_ICICI_URL = "https://apibankingonesandbox.icici.bank.in/api/v1/composite-validation"
 DEFAULT_X_PRIORITY = "0010"
 DEFAULT_SERVICE = "IMPS_NAME_INQUIRY"
 
