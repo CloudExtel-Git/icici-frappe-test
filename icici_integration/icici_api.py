@@ -15,6 +15,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding as sym_padding
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import serialization
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +85,12 @@ def load_icici_public_key():
         data = f.read()
 
     cert = x509.load_pem_x509_certificate(data, backend=default_backend())
-    frappe.log_error(message=cert.public_key(), title="cert.publickey")
+    public_key = cert.public_key()
+    pem_public_key = public_key.public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo
+)
+    frappe.log_error(message=pem_public_key.decode(), title="cert.publickey")
     return cert.public_key()
 
 
