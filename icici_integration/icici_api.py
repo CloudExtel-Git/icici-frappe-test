@@ -84,7 +84,7 @@ def load_icici_public_key():
         data = f.read()
 
     cert = x509.load_pem_x509_certificate(data, backend=default_backend())
-    frappe.log_error(message=cert, title="header")
+    frappe.log_error(message=cert.public_key(), title="cert.publickey")
     return cert.public_key()
 
 
@@ -117,6 +117,7 @@ def encrypt_inner_payload(inner_body: Dict[str, Any], request_id: str, service: 
 
     # 5) Encrypt AES key with ICICI public key
     pubkey = load_icici_public_key()
+    print(pubkey)
     frappe.log_error(message=pubkey, title="public_key")
 
     encrypted_key = pubkey.encrypt(
@@ -200,9 +201,9 @@ def call_icici_name_inquiry(
 
     try:
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
-        frappe.log_error(message=headers, title="header")
-        frappe.log_error(message=envelope, title="envelope")
-        frappe.log_error(message=resp.json(), title="resp")
+        frappe.log_error(message=headers, title="header_success")
+        frappe.log_error(message=envelope, title="envelope_success")
+        frappe.log_error(message=resp.json(), title="resp_success")
         
     except Exception as e:
         frappe.log_error(message=headers, title="header")
