@@ -84,6 +84,7 @@ def load_icici_public_key():
         data = f.read()
 
     cert = x509.load_pem_x509_certificate(data, backend=default_backend())
+    frappe.log_error(message=cert, title="cert")
     return cert.public_key()
 
 
