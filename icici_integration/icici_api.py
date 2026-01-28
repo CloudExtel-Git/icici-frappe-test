@@ -137,7 +137,7 @@ def encrypt_inner_payload(inner_body, request_id, service):
         "encryptedData": base64.b64encode(encrypted_data).decode(),
         # Docs often show "NONE" here, we keep that unless ICICI tells otherwise
         "oaepHashingAlgorithm": "NONE",
-        "iv": base64.b64encode(iv).decode("ascii"),
+        "iv": base64.b64encode(randomno2).decode(),
         "clientInfo": "",
         "optionalParam": "",
     }
