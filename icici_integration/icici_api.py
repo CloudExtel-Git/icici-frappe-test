@@ -201,7 +201,15 @@ def call_icici_name_inquiry(
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
         frappe.log_error(message=headers, title="header_success")
         frappe.log_error(message=envelope, title="envelope_success")
-        frappe.log_error(message=resp.json(), title="resp_success")
+        frappe.log_error(
+    message=resp,
+    title="ICICI_RAW_RESPONSE"
+)
+        # frappe.log_error(message=resp.json(), title="resp_success")
+        frappe.log_error(
+    message=f"Status: {resp.status_code}\nHeaders: {resp.headers}\nBody: {resp.text}",
+    title="ICICI_RAW_Data"
+)
         
     except Exception as e:
         frappe.log_error(message=headers, title="header")
