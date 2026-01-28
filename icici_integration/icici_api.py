@@ -264,6 +264,10 @@ def call_icici_name_inquiry(
             message=f"Response Status: {resp.status_code}\nResponse Headers: {dict(resp.headers)}\nResponse Body: {resp.text}",
             title="ICICI API Response"
         )
+        frappe.log_error(
+            message=resp.json(),
+            title="ICICI Complete Response"
+        )
         
     except requests.exceptions.Timeout:
         frappe.throw(
@@ -420,8 +424,8 @@ def verify_supplier_bank(supplier: str) -> Dict[str, Any]:
     if meta.has_field("custom_icici_verified_on"):
         doc.db_set("custom_icici_verified_on", frappe.utils.now(), commit=False)
 
-    if meta.has_field("custom_icici_raw_response"):
-        doc.db_set("custom_icici_raw_response", frappe.as_json(resp_json), commit=False)
+    # if meta.has_field("custom_icici_raw_response"):
+    #     doc.db_set("custom_icici_raw_response", frappe.as_json(resp_json), commit=False)
 
     if meta.has_field("custom_icici_account_name") and bene_name:
         doc.db_set("custom_icici_account_name", bene_name, commit=False)
