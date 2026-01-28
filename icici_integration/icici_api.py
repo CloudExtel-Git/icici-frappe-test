@@ -62,6 +62,15 @@ def get_cert_path() -> str:
     return os.path.join(app_root, "icici_integration", "icici_cert.pem")
 
 
+def get_private_key_path() -> str:
+    """
+    Returns absolute path to private_key.pem inside the app module.
+    Note: You need to add your private key file for decryption.
+    """
+    app_root = frappe.get_app_path("icici_integration")
+    return os.path.join(app_root, "icici_integration", "private_key.pem")
+
+
 def load_icici_public_key():
     """
     Load ICICI's public key from icici_cert.pem (X.509 certificate).
@@ -78,6 +87,37 @@ def load_icici_public_key():
 
     cert = x509.load_pem_x509_certificate(data, backend=default_backend())
     return cert.public_key()
+
+
+def load_client_private_key():
+    """
+    Load client's private key for decrypting the response.
+    This should be your private key that corresponds to the public key
+    you shared with ICICI.
+    """
+    private_key_path = get_private_key_path()
+    if not os.path.exists(private_key_path):
+        frappe.throw(
+            _("Client private key not found at {0}. Add your private_key.pem file.").format(private_key_path),
+            title=_("ICICI Integration Error"),
+        )
+
+    with open(private_key_path, "rb") as f:
+        data = f.read()
+    
+    # Try loading as PEM private key
+    try:
+        private_key = serialization.load_pem_private_key(
+            data,
+            password=None,  # Add password if your key is encrypted
+            backend=default_backend()
+        )
+        return private_key
+    except Exception as e:
+        frappe.throw(
+            _("Failed to load private key: {0}").format(str(e)),
+            title=_("ICICI Integration Error"),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +232,99 @@ def encrypt_inner_payload_icici(inner_body: Dict[str, Any], request_id: str, ser
     return envelope
 
 
+def decrypt_icici_response(encrypted_response: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Decrypt the encrypted response from ICICI using client's private key.
+    
+    Steps provided by client:
+    1. Base64 Decode the encrypted Key.
+    2. Decrypt the output of step 1 using (RSA/ECB/PKCS1) and the Client's PrivateKey.
+    3. Base64 Decode the encryptedData.
+    4. Fetch first 16 bytes as IV from output of step 3.
+    5. Decrypt output of step 3 using (AES/CBC/PKCS5), step 2 output as key and step 4 output as IV.
+    6. Ignore the first 16 bytes in the output of step 5 because it is IV.
+    """
+    
+    try:
+        frappe.log_error(message=f"Starting decryption of response: {encrypted_response.keys()}", title="ICICI Decryption Start")
+        
+        # Step 1: Base64 Decode the encrypted Key
+        encrypted_key_b64 = encrypted_response.get("encryptedKey", "")
+        encrypted_key = base64.b64decode(encrypted_key_b64)
+        frappe.log_error(message=f"Step 1 - Encrypted key decoded, length: {len(encrypted_key)}", title="ICICI Decryption Step 1")
+        
+        # Step 2: Decrypt using RSA/ECB/PKCS1 and Client's PrivateKey
+        private_key = load_client_private_key()
+        aes_key_encrypted = private_key.decrypt(
+            encrypted_key,
+            asym_padding.PKCS1v15()  # Using PKCS1v15 as per client specs
+        )
+        
+        # The decrypted key should be 16 bytes (AES-128 key)
+        if len(aes_key_encrypted) != 16:
+            frappe.log_error(message=f"AES key length is {len(aes_key_encrypted)}, expected 16", title="ICICI Decryption Warning")
+            # Take first 16 bytes if longer, pad with zeros if shorter
+            if len(aes_key_encrypted) > 16:
+                aes_key = aes_key_encrypted[:16]
+            else:
+                aes_key = aes_key_encrypted.ljust(16, b'0')
+        else:
+            aes_key = aes_key_encrypted
+            
+        frappe.log_error(message=f"Step 2 - AES Key decrypted: {aes_key.hex()}", title="ICICI Decryption Step 2")
+        
+        # Step 3: Base64 Decode the encryptedData
+        encrypted_data_b64 = encrypted_response.get("encryptedData", "")
+        encrypted_data = base64.b64decode(encrypted_data_b64)
+        frappe.log_error(message=f"Step 3 - Encrypted data decoded, length: {len(encrypted_data)}", title="ICICI Decryption Step 3")
+        
+        # Step 4: Fetch first 16 bytes as IV
+        iv = encrypted_data[:16]
+        actual_ciphertext = encrypted_data[16:]  # Rest is the actual ciphertext
+        frappe.log_error(message=f"Step 4 - IV extracted: {iv.hex()}", title="ICICI Decryption Step 4")
+        frappe.log_error(message=f"Step 4 - Ciphertext length: {len(actual_ciphertext)}", title="ICICI Decryption Step 4")
+        
+        # Step 5: Decrypt using AES/CBC/PKCS5
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded_plaintext = decryptor.update(actual_ciphertext) + decryptor.finalize()
+        
+        # Remove PKCS7 padding
+        unpadder = sym_padding.PKCS7(128).unpadder()
+        plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+        
+        frappe.log_error(message=f"Step 5 - Decrypted plaintext length: {len(plaintext)}", title="ICICI Decryption Step 5")
+        
+        # Step 6: Ignore first 16 bytes (which is the IV that was concatenated)
+        # Note: According to client specs, IV was concatenated before JSON data during encryption
+        # So we need to skip first 16 characters (not bytes, since it's string)
+        plaintext_str = plaintext.decode('utf-8')
+        frappe.log_error(message=f"Step 6 - Full plaintext: {plaintext_str}", title="ICICI Decryption Step 6")
+        
+        # Remove the first 16 characters (which is the IV string)
+        if len(plaintext_str) > 16:
+            json_str = plaintext_str[16:]
+        else:
+            json_str = plaintext_str
+            
+        frappe.log_error(message=f"Step 6 - JSON string after removing IV: {json_str}", title="ICICI Decryption Step 6")
+        
+        # Parse JSON
+        decrypted_data = json.loads(json_str)
+        frappe.log_error(message=f"Final decrypted data: {decrypted_data}", title="ICICI Decryption Complete")
+        
+        return decrypted_data
+        
+    except Exception as e:
+        frappe.log_error(
+            message=f"Decryption failed: {str(e)}\nResponse: {encrypted_response}",
+            title="ICICI Decryption Error"
+        )
+        raise
+
+
 # ---------------------------------------------------------------------------
-# CORE CALL TO ICICI - UPDATED WITH NEW ENCRYPTION
+# CORE CALL TO ICICI - UPDATED WITH NEW ENCRYPTION AND DECRYPTION
 # ---------------------------------------------------------------------------
 
 def call_icici_name_inquiry(
@@ -205,7 +336,7 @@ def call_icici_name_inquiry(
 ) -> Tuple[bool, int, Any]:
     """
     Low-level helper: builds inner JSON, encrypts, hits ICICI API,
-    returns (success_flag, http_status, parsed_response_or_text).
+    decrypts response, returns (success_flag, http_status, parsed_response_or_text).
     """
     url, api_key, x_priority, service = get_icici_config()
 
@@ -264,10 +395,6 @@ def call_icici_name_inquiry(
             message=f"Response Status: {resp.status_code}\nResponse Headers: {dict(resp.headers)}\nResponse Body: {resp.text}",
             title="ICICI API Response"
         )
-        frappe.log_error(
-            message=resp.json(),
-            title="ICICI Complete Response"
-        )
         
     except requests.exceptions.Timeout:
         frappe.throw(
@@ -294,6 +421,24 @@ def call_icici_name_inquiry(
     try:
         resp_json = resp.json()
         logger.info("ICICI RESPONSE JSON [%s]: %s", status, resp_json)
+        
+        # Check if response is encrypted
+        if isinstance(resp_json, dict) and 'encryptedData' in resp_json:
+            # Try to decrypt the response
+            try:
+                decrypted_response = decrypt_icici_response(resp_json)
+                logger.info("ICICI DECRYPTED RESPONSE [%s]: %s", status, decrypted_response)
+                resp_json = {
+                    "encrypted_response": resp_json,
+                    "decrypted_response": decrypted_response
+                }
+            except Exception as decrypt_error:
+                logger.error("Failed to decrypt ICICI response: %s", str(decrypt_error))
+                # Return the encrypted response anyway
+                resp_json["decryption_error"] = str(decrypt_error)
+        else:
+            logger.info("Response appears to be already decrypted or in different format")
+            
     except ValueError:
         resp_json = resp.text
         logger.info("ICICI RESPONSE TEXT [%s]: %s", status, resp_json[:500])
@@ -340,6 +485,33 @@ def icici_name_inquiry(
         "http_status": http_status,
         "icici_response": resp_json,
     }
+
+
+# ---------------------------------------------------------------------------
+# DECRYPTION UTILITY FUNCTION (for manual use)
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def decrypt_icici_response_utility(encrypted_response: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Utility function to manually decrypt an ICICI encrypted response.
+    Useful for testing and debugging.
+    """
+    try:
+        if isinstance(encrypted_response, str):
+            encrypted_response = json.loads(encrypted_response)
+        
+        decrypted_data = decrypt_icici_response(encrypted_response)
+        return {
+            "success": True,
+            "decrypted_data": decrypted_data
+        }
+    except Exception as e:
+        frappe.log_error(message=f"Utility decryption failed: {str(e)}", title="ICICI Decryption Utility Error")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -397,23 +569,34 @@ def verify_supplier_bank(supplier: str) -> Dict[str, Any]:
         rem_mobile=rem_mobile,
     )
 
-    # Interpret response
+    # Interpret response - now handling both encrypted and decrypted responses
     match_flag = None
     bene_name = None
     status_text = f"HTTP {http_status}"
 
     try:
         if isinstance(resp_json, dict):
-            # Try to extract relevant information from response
-            match_flag = resp_json.get("response", {}).get("matchFlag") or resp_json.get("matchFlag")
-            bene_name = resp_json.get("response", {}).get("BeneName") or resp_json.get("BeneName")
+            # Check if we have decrypted response
+            if "decrypted_response" in resp_json:
+                decrypted = resp_json["decrypted_response"]
+                # Extract from decrypted response
+                match_flag = decrypted.get("matchFlag")
+                bene_name = decrypted.get("BeneName") or decrypted.get("beneName")
+            elif "encrypted_response" in resp_json:
+                # Still encrypted, use the encrypted response structure
+                match_flag = resp_json.get("matchFlag")
+                bene_name = resp_json.get("BeneName") or resp_json.get("beneName")
+            else:
+                # Try to extract directly
+                match_flag = resp_json.get("response", {}).get("matchFlag") or resp_json.get("matchFlag")
+                bene_name = resp_json.get("response", {}).get("BeneName") or resp_json.get("BeneName")
             
             if match_flag:
                 status_text += f" | Match: {match_flag}"
             if bene_name:
                 status_text += f" | Name: {bene_name}"
-    except Exception:
-        pass
+    except Exception as e:
+        frappe.log_error(message=f"Error parsing response: {str(e)}", title="ICICI Response Parsing Error")
 
     # Write status back to Supplier if fields exist
     meta = doc.meta
