@@ -98,43 +98,49 @@ def load_icici_public_key():
 # ENCRYPTION HELPERS
 # ---------------------------------------------------------------------------
 
-def encrypt_inner_payload(inner_body, request_id, service):
-    # STEP 1: RANDOMNO1 (AES key) → 16 bytes
-    randomno1 = os.urandom(16)  # AES-128
+def encrypt_inner_payload(inner_body: Dict[str, Any], request_id: str, service: str) -> Dict[str, Any]:
+    """
+    Encrypt the inner JSON payload using:
+    - AES-256-CBC with PKCS7 padding
+    - AES key encrypted using ICICI RSA public key (OAEP SHA-256)
+    """
 
-    # STEP 4: RANDOMNO2 (IV) → 16 bytes
-    randomno2 = os.urandom(16)
+    # 1) Convert JSON to compact bytes
+    plaintext = json.dumps(inner_body, separators=(",", ":")).encode("utf-8")
 
-    # STEP 5: DATA = RANDOMNO2 + JSON
-    json_data = json.dumps(inner_body, separators=(",", ":")).encode("utf-8")
-    data = randomno2 + json_data
+    # 2) Random AES key + IV
+    aes_key = os.urandom(32)  # 256-bit
+    iv = os.urandom(16)       # 128-bit
 
-    # STEP 6: AES/CBC/PKCS5Padding
+    # 3) PKCS7 padding to block size 128 bits
     padder = sym_padding.PKCS7(128).padder()
-    padded_data = padder.update(data) + padder.finalize()
+    padded = padder.update(plaintext) + padder.finalize()
 
-    cipher = Cipher(
-        algorithms.AES(randomno1),
-        modes.CBC(randomno2),
-        backend=default_backend(),
-    )
+    # 4) AES-CBC encrypt
+    cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
     encryptor = cipher.encryptor()
-    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    ciphertext = encryptor.update(padded) + encryptor.finalize()
 
-    # STEP 2: RSA/ECB/PKCS1Padding
+    # 5) Encrypt AES key with ICICI public key
     pubkey = load_icici_public_key()
+    print(pubkey)
+    frappe.log_error(message=pubkey, title="public_key")
 
     encrypted_key = pubkey.encrypt(
-        randomno1,
-        asym_padding.PKCS1v15()
+        aes_key,
+        asym_padding.OAEP(
+            mgf=asym_padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
     )
 
-    # STEP 3 & 7: Base64 encode
+    # 6) Build envelope in ICICI format
     envelope = {
         "requestId": request_id,
         "service": service,
-        "encryptedKey": base64.b64encode(encrypted_key).decode(),
-        "encryptedData": base64.b64encode(encrypted_data).decode(),
+        "encryptedKey": base64.b64encode(encrypted_key).decode("ascii"),
+        "encryptedData": base64.b64encode(ciphertext).decode("ascii"),
         # Docs often show "NONE" here, we keep that unless ICICI tells otherwise
         "oaepHashingAlgorithm": "NONE",
         "iv": base64.b64encode(iv).decode("ascii"),
@@ -143,6 +149,8 @@ def encrypt_inner_payload(inner_body, request_id, service):
     }
 
     return envelope
+
+
 # ---------------------------------------------------------------------------
 # CORE CALL TO ICICI
 # ---------------------------------------------------------------------------
