@@ -389,6 +389,11 @@ def call_icici_name_inquiry(
         )
         
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
+        # resp_json = 
+        frappe.log_error(
+            message=resp.json(),
+            title="ICICI json response"
+        )
         
         # Log response details
         frappe.log_error(
