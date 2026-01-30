@@ -68,7 +68,7 @@ def get_private_key_path() -> str:
     Note: You need to add your private key file for decryption.
     """
     app_root = frappe.get_app_path("icici_integration")
-    return os.path.join(app_root, "icici_integration", "private_icici_key.pem")
+    return os.path.join(app_root, "icici_integration", "icici_private.pem")
 
 
 def load_icici_public_key():
