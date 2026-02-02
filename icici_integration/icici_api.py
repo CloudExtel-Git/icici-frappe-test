@@ -153,6 +153,8 @@ def encrypt_inner_payload_icici(inner_body: Dict[str, Any], request_id: str, ser
     
     # Step 2: Encrypt RANDOMNO1 using RSA/ECB/PKCS1Padding
     pubkey = load_icici_public_key()
+    frappe.log_error(message=pubkey, title="Public key")
+
     randomno1_bytes = randomno1.encode('utf-8')
     
     # RSA encryption with PKCS1 v1.5 padding
