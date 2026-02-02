@@ -153,7 +153,11 @@ def encrypt_inner_payload_icici(inner_body: Dict[str, Any], request_id: str, ser
     
     # Step 2: Encrypt RANDOMNO1 using RSA/ECB/PKCS1Padding
     pubkey = load_icici_public_key()
-    frappe.log_error(message=pubkey, title="Public key")
+    public_key = pubkey.public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo
+)
+    frappe.log_error(message=public_key.decode(), title="publickey")
 
     randomno1_bytes = randomno1.encode('utf-8')
     
@@ -167,6 +171,8 @@ def encrypt_inner_payload_icici(inner_body: Dict[str, Any], request_id: str, ser
     # Step 3: Base64 encode the encrypted key
     encr_key = base64.b64encode(encrypted_key).decode('ascii')
     frappe.log_error(message=f"ENCR_KEY (first 50 chars): {encr_key[:50]}", title="ICICI Encryption Step 3")
+    frappe.log_error(message=encr_key, title="Base64")
+
     
     # Step 4: Generate another 16-digit random number RANDOMNO2 (IV)
     randomno2 = generate_16_digit_random()
