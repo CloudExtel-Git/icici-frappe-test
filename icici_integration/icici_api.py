@@ -59,7 +59,7 @@ def get_cert_path() -> str:
     Returns absolute path to icici_cert.pem inside the app module.
     """
     app_root = frappe.get_app_path("icici_integration")
-    return os.path.join(app_root, "icici_integration", "icici_public_mahesh.pem")
+    return os.path.join(app_root, "icici_integration", "icici_cert.pem")
 
 
 def get_private_key_path() -> str:
@@ -397,6 +397,10 @@ def call_icici_name_inquiry(
         )
         
         resp = requests.post(url, json=envelope, headers=headers, timeout=60)
+        frappe.log_error(
+            message=resp.json(),
+            title="ICICI JSON Response"
+        )
         
         # Log response details
         frappe.log_error(
