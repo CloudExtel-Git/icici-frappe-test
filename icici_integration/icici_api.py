@@ -365,6 +365,11 @@ def call_icici_name_inquiry(
         "BcID": "IBCKer00055",
     }
 
+    frappe.log_error(
+            message=inner,
+            title="Payload to ICICI"
+        )
+
     logger = frappe.logger("icici_integration")
     logger.info("ICICI INNER PAYLOAD: %s", inner)
 
@@ -569,7 +574,7 @@ def verify_supplier_bank(supplier: str) -> Dict[str, Any]:
             )
         )
 
-    rem_name = (doc.supplier_name or supplier).strip()
+    rem_name = (doc.supplier_name).strip()
     rem_mobile = (
         str(doc.get("mobile_no") or doc.get("phone") or "9999999999")
     ).strip()
